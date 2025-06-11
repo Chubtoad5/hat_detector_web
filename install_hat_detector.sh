@@ -52,7 +52,7 @@ echo "2. Installing OS dependencies (Python, Git, OpenCV libs, Gunicorn, libcap2
 apt install -y \
     python3 python3-pip python3-venv \
     git \
-    libgl1-mesa-glx \
+    libgl1 \
     libjpeg-dev libpng-dev libtiff-dev \
     libavcodec-dev libavformat-dev libswscale-dev \
     libv4l-dev \
