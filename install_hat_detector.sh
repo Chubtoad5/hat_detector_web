@@ -25,15 +25,15 @@ fi
 # --- Check if running as root (needed for system installs) ---
 if [[ $EUID -ne 0 ]]; then
    echo "This script must be run as root or with sudo."
-   exec sudo bash "<span class="math-inline">0" "</span>@" # Re-execute the script with sudo
+   exec sudo bash "$0" "$@" # Re-execute the script with sudo
    exit # Should not be reached
 fi
 
 echo "--- Starting Hat Detector Web App Installation ---"
 
 # Determine the user and group for the systemd service based on who ran sudo
-WEB_SERVICE_USER="<span class="math-inline">\{SUDO\_USER\:\-root\}" \# Default to root if SUDO\_USER is not set
-WEB\_SERVICE\_GROUP\=</span>(id -gn "$WEB_SERVICE_USER" 2>/dev/null || echo "nogroup") # Get primary group, default to nogroup if user not found
+WEB_SERVICE_USER="${SUDO_USER:-root}" # Default to root if SUDO_USER is not set
+WEB_SERVICE_GROUP=$(id -gn "$WEB_SERVICE_USER" 2>/dev/null || echo "nogroup") # Get primary group, default to nogroup if user not found
 
 echo "Service will attempt to run as user: $WEB_SERVICE_USER, group: $WEB_SERVICE_GROUP"
 
@@ -55,9 +55,9 @@ apt install -y \
     libcap2-bin || { echo "Failed to install OS dependencies. Exiting."; exit 1; }
 
 # --- 3. Copy Project Files to Install Path ---
-echo "3. Copying project files to <span class="math-inline">INSTALL\_PATH\.\.\."
-\# Get the directory where the install script itself is located
-SCRIPT\_DIR\="</span>( cd "<span class="math-inline">\( dirname "</span>{BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
+echo "3. Copying project files to $INSTALL_PATH..."
+# Get the directory where the install script itself is located
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 PROJECT_SOURCE_DIR="$SCRIPT_DIR/hat_detector_web" # Assuming the 'hat_detector_web' folder is next to the script
 
 if [ ! -d "$PROJECT_SOURCE_DIR" ]; then
@@ -110,20 +110,25 @@ WorkingDirectory=$INSTALL_PATH
 Environment="VISION_ENDPOINT=$AZURE_VISION_ENDPOINT"
 Environment="VISION_KEY=$AZURE_VISION_KEY"
 
-ExecStart=$GUNICORN_BIN --workers 1 --bind 0.0.0.0:<span class="math-inline">SERVICE\_PORT app\:app
-ReadWritePaths\=/dev/video0
-StandardOutput\=syslog
-StandardError\=syslog
-SyslogIdentifier\=hat\-detector
-Restart\=always
-RestartSec\=10
-\[Install\]
-WantedBy\=multi\-user\.target
+ExecStart=$GUNICORN_BIN --workers 1 --bind 0.0.0.0:$SERVICE_PORT app:app
+
+ReadWritePaths=/dev/video0
+
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=hat-detector
+
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
 EOF
-\# \-\-\- 7\. Set Webcam Device Permissions \(if needed\) \-\-\-
-echo "7\. Setting webcam device permissions \(if /dev/video0 exists\)\.\.\."
-if \[ \-c /dev/video0 \]; then
-VIDEO\_GID\=</span>(grep video /etc/group | cut -d: -f3)
+
+# --- 7. Set Webcam Device Permissions (if needed) ---
+echo "7. Setting webcam device permissions (if /dev/video0 exists)..."
+if [ -c /dev/video0 ]; then
+    VIDEO_GID=$(grep video /etc/group | cut -d: -f3)
     if [ -n "$VIDEO_GID" ]; then
         echo "Found video group GID: $VIDEO_GID."
         usermod -aG video "$WEB_SERVICE_USER" || { echo "Failed to add user '$WEB_SERVICE_USER' to video group."; }
@@ -137,4 +142,28 @@ fi
 
 # --- 8. Configure Firewall (UFW for Ubuntu, Firewalld for CentOS/Fedora) ---
 echo "8. Configuring firewall to allow port $SERVICE_PORT..."
-if command -v ufw &>
+if command -v ufw &> /dev/null; then
+    ufw allow "$SERVICE_PORT"/tcp || echo "Warning: Failed to allow port $SERVICE_PORT in UFW. Check manually."
+    ufw reload || echo "Warning: Failed to reload UFW. Check manually."
+    ufw enable || echo "Warning: UFW not enabled. Enabling it might block other services. Check manually."
+elif command -v firewall-cmd &> /dev/null; then
+    firewall-cmd --add-port="$SERVICE_PORT"/tcp --permanent || echo "Warning: Failed to add port $SERVICE_PORT in Firewalld. Check manually."
+    firewall-cmd --reload || echo "Warning: Failed to reload Firewalld. Check manually."
+else
+    echo "Warning: No UFW or Firewalld found. Please configure your firewall manually if needed."
+fi
+
+# --- 9. Enable and Start the Service ---
+echo "9. Reloading systemd daemon, enabling and starting service..."
+systemctl daemon-reload || { echo "Failed to reload systemd daemon. Exiting."; exit 1; }
+systemctl enable hat-detector || { echo "Failed to enable hat-detector service. Exiting."; exit 1; }
+
+systemctl stop hat-detector
+systemctl start hat-detector || { echo "Failed to start hat-detector service. Check 'sudo journalctl -u hat-detector'. Exiting."; exit 1; }
+
+echo "--- Installation Complete ---"
+echo "Web service should be running on the default HTTP port (80)."
+echo "Access it via: http://<VM_IP_Address>"
+echo "Check service status: sudo systemctl status hat-detector"
+echo "View service logs: sudo journalctl -u hat-detector -f"
+echo "It is recommended to reboot the VM (sudo reboot) after installation for full webcam permissions to take effect."
