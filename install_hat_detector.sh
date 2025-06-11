@@ -1,10 +1,9 @@
 #!/bin/bash
 
 # --- Configuration Variables ---
-# The project will be installed from the current directory where this script resides.
-PROJECT_DIR_NAME="hat_detector_web_app_local" # A new name to represent its local origin
-INSTALL_PATH="/opt/$PROJECT_DIR_NAME" # Where the project will be installed on the VM
-SERVICE_PORT="80" # Default HTTP port (80)
+PROJECT_DIR_NAME="hat_detector_web_app_local"
+INSTALL_PATH="/opt/$PROJECT_DIR_NAME"
+GUNICORN_PORT="8000" # Gunicorn will now bind to a non-privileged port
 
 # --- Azure Credentials (MUST be provided as arguments) ---
 AZURE_VISION_ENDPOINT=""
@@ -42,7 +41,7 @@ echo "1. Updating system packages..."
 apt update && apt upgrade -y || { echo "Failed to update packages. Exiting."; exit 1; }
 
 # --- 2. Install Needed OS Dependencies ---
-echo "2. Installing OS dependencies (Python, Git, OpenCV libs, Gunicorn, libcap2-bin)..."
+echo "2. Installing OS dependencies (Python, Git, OpenCV libs, Gunicorn, Nginx, libcap2-bin)..."
 apt install -y \
     python3 python3-pip python3-venv \
     git \
@@ -52,13 +51,13 @@ apt install -y \
     libv4l-dev \
     libxvidcore-dev libx264-dev \
     gunicorn \
+    nginx \
     libcap2-bin || { echo "Failed to install OS dependencies. Exiting."; exit 1; }
 
 # --- 3. Copy Project Files to Install Path ---
 echo "3. Copying project files to $INSTALL_PATH..."
-# Get the directory where the install script itself is located
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
-PROJECT_SOURCE_DIR="$SCRIPT_DIR/hat_detector_web" # Assuming the 'hat_detector_web' folder is next to the script
+PROJECT_SOURCE_DIR="$SCRIPT_DIR/hat_detector_web"
 
 if [ ! -d "$PROJECT_SOURCE_DIR" ]; then
     echo "Error: Application source directory '$PROJECT_SOURCE_DIR' not found."
@@ -75,7 +74,6 @@ cp -r "$PROJECT_SOURCE_DIR" "$INSTALL_PATH" || { echo "Failed to copy project fi
 echo "Project files copied successfully."
 cd "$INSTALL_PATH" || { echo "Failed to change directory to $INSTALL_PATH. Exiting."; exit 1; }
 
-# Ensure the correct user owns the project directory for virtual env setup
 chown -R "$WEB_SERVICE_USER":"$WEB_SERVICE_GROUP" "$INSTALL_PATH" || { echo "Failed to change ownership of $INSTALL_PATH. Exiting."; exit 1; }
 
 # --- 4. Setup Python Virtual Environment and Install Python Dependencies ---
@@ -83,18 +81,17 @@ echo "4. Setting up Python virtual environment and installing dependencies..."
 sudo -u "$WEB_SERVICE_USER" python3 -m venv "$INSTALL_PATH/venv" || { echo "Failed to create virtual environment. Exiting."; exit 1; }
 sudo -u "$WEB_SERVICE_USER" bash -c "source $INSTALL_PATH/venv/bin/activate && pip install -r $INSTALL_PATH/requirements.txt" || { echo "Failed to install Python dependencies. Exiting."; exit 1; }
 
-# --- 5. Configure Gunicorn for privileged ports ---
-echo "5. Configuring Gunicorn for privileged ports (setcap)..."
+# --- 5. Clean up setcap (no longer needed) ---
+echo "5. Removing setcap from Gunicorn (no longer needed for non-privileged port)..."
 GUNICORN_BIN="$INSTALL_PATH/venv/bin/gunicorn"
 if [ -f "$GUNICORN_BIN" ]; then
-    chmod +x "$GUNICORN_BIN"
-    setcap 'cap_net_bind_service=+ep' "$GUNICORN_BIN" || { echo "Warning: Failed to setcap on Gunicorn binary. Port 80 might not work as non-root."; }
+    sudo setcap -r "$GUNICORN_BIN" || echo "Warning: Failed to remove capabilities from Gunicorn binary. Proceeding."
 else
-    echo "Warning: Gunicorn binary not found at $GUNICORN_BIN. Setcap skipped."
+    echo "Warning: Gunicorn binary not found at $GUNICORN_PATH. Skipping setcap removal."
 fi
 
-# --- 6. Configure systemd Service ---
-echo "6. Creating systemd service file..."
+# --- 6. Configure systemd Service for Gunicorn (on high port) ---
+echo "6. Creating systemd service file for Gunicorn..."
 SERVICE_FILE="/etc/systemd/system/hat-detector.service"
 
 cat <<EOF | tee "$SERVICE_FILE"
@@ -110,7 +107,8 @@ WorkingDirectory=$INSTALL_PATH
 Environment="VISION_ENDPOINT=$AZURE_VISION_ENDPOINT"
 Environment="VISION_KEY=$AZURE_VISION_KEY"
 
-ExecStart=$GUNICORN_BIN --workers 1 --bind 0.0.0.0:$SERVICE_PORT app:app
+# Gunicorn now binds to a non-privileged port, Nginx will proxy to it
+ExecStart=$INSTALL_PATH/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:$GUNICORN_PORT app:app
 
 ReadWritePaths=/dev/video0
 
@@ -125,8 +123,46 @@ RestartSec=10
 WantedBy=multi-user.target
 EOF
 
-# --- 7. Set Webcam Device Permissions (if needed) ---
-echo "7. Setting webcam device permissions (if /dev/video0 exists)..."
+# --- 7. Configure Nginx as a Reverse Proxy ---
+echo "7. Configuring Nginx as a reverse proxy..."
+NGINX_CONF_AVAILABLE="/etc/nginx/sites-available/hat-detector"
+NGINX_CONF_ENABLED="/etc/nginx/sites-enabled/hat-detector"
+
+cat <<EOF | sudo tee "$NGINX_CONF_AVAILABLE"
+server {
+    listen 80;
+    server_name _; # Listen on all available IPs
+
+    location / {
+        proxy_pass http://127.0.0.1:$GUNICORN_PORT;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+
+    # Optionally, serve static files directly with Nginx (more efficient)
+    # This assumes your static files are in /opt/hat_detector_web_app_local/static
+    location /static/ {
+        alias $INSTALL_PATH/static/;
+        expires 30d; # Cache static files for 30 days
+        add_header Cache-Control "public, no-transform";
+    }
+}
+EOF
+
+# Enable the Nginx site
+if [ -f "$NGINX_CONF_ENABLED" ]; then
+    rm "$NGINX_CONF_ENABLED" || echo "Warning: Failed to remove old Nginx symlink."
+fi
+ln -s "$NGINX_CONF_AVAILABLE" "$NGINX_CONF_ENABLED" || { echo "Failed to create Nginx symlink. Exiting."; exit 1; }
+
+# Test Nginx configuration and restart
+sudo nginx -t && sudo systemctl restart nginx || { echo "Nginx configuration test failed or restart failed. Exiting."; exit 1; }
+echo "Nginx configured and restarted successfully."
+
+# --- 8. Set Webcam Device Permissions (if needed) ---
+echo "8. Setting webcam device permissions (if /dev/video0 exists)..."
 if [ -c /dev/video0 ]; then
     VIDEO_GID=$(grep video /etc/group | cut -d: -f3)
     if [ -n "$VIDEO_GID" ]; then
@@ -140,30 +176,33 @@ else
     echo "No /dev/video0 found. Assuming no webcam is connected or needed."
 fi
 
-# --- 8. Configure Firewall (UFW for Ubuntu, Firewalld for CentOS/Fedora) ---
-echo "8. Configuring firewall to allow port $SERVICE_PORT..."
+# --- 9. Configure Firewall (UFW for Ubuntu, Firewalld for CentOS/Fedora) ---
+echo "9. Configuring firewall to allow port 80..."
 if command -v ufw &> /dev/null; then
-    ufw allow "$SERVICE_PORT"/tcp || echo "Warning: Failed to allow port $SERVICE_PORT in UFW. Check manually."
+    ufw allow 80/tcp || echo "Warning: Failed to allow port 80 in UFW. Check manually."
     ufw reload || echo "Warning: Failed to reload UFW. Check manually."
     ufw enable || echo "Warning: UFW not enabled. Enabling it might block other services. Check manually."
 elif command -v firewall-cmd &> /dev/null; then
-    firewall-cmd --add-port="$SERVICE_PORT"/tcp --permanent || echo "Warning: Failed to add port $SERVICE_PORT in Firewalld. Check manually."
+    firewall-cmd --add-port=80/tcp --permanent || echo "Warning: Failed to add port 80 in Firewalld. Check manually."
     firewall-cmd --reload || echo "Warning: Failed to reload Firewalld. Check manually."
 else
     echo "Warning: No UFW or Firewalld found. Please configure your firewall manually if needed."
 fi
 
-# --- 9. Enable and Start the Service ---
-echo "9. Reloading systemd daemon, enabling and starting service..."
+# --- 10. Enable and Start the Hat Detector Service ---
+echo "10. Reloading systemd daemon, enabling and starting Hat Detector service..."
 systemctl daemon-reload || { echo "Failed to reload systemd daemon. Exiting."; exit 1; }
 systemctl enable hat-detector || { echo "Failed to enable hat-detector service. Exiting."; exit 1; }
 
-systemctl stop hat-detector
+systemctl stop hat-detector # Ensure it's stopped before starting afresh
 systemctl start hat-detector || { echo "Failed to start hat-detector service. Check 'sudo journalctl -u hat-detector'. Exiting."; exit 1; }
 
 echo "--- Installation Complete ---"
-echo "Web service should be running on the default HTTP port (80)."
+echo "Web service should now be accessible via Nginx on port 80."
 echo "Access it via: http://<VM_IP_Address>"
-echo "Check service status: sudo systemctl status hat-detector"
-echo "View service logs: sudo journalctl -u hat-detector -f"
+echo "Check Gunicorn service status: sudo systemctl status hat-detector"
+echo "View Gunicorn service logs: sudo journalctl -u hat-detector -f"
+echo "Check Nginx service status: sudo systemctl status nginx"
+echo "View Nginx access logs: tail -f /var/log/nginx/access.log"
+echo "View Nginx error logs: tail -f /var/log/nginx/error.log"
 echo "It is recommended to reboot the VM (sudo reboot) after installation for full webcam permissions to take effect."
