@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hat Detector</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎩</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <h1>Hat Detector</h1>
+        <div class="video-container">
+            <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Webcam Feed">
+        </div>
+        <div class="controls">
+            <button id="analyzeButton">Analyze Frame</button>
+        </div>
+        <div class="status-box">
+            <p>Status: <span id="statusMessage">Initializing...</span></p>
+            <div id="detectedObjectsList">
+                </div>
+        </div>
+    </div>
+
+    <script>
+        const analyzeButton = document.getElementById('analyzeButton');
+        const statusMessage = document.getElementById('statusMessage');
+        const detectedObjectsList = document.getElementById('detectedObjectsList');
+        const videoFeed = document.getElementById('videoFeed');
+
+        // Function to update analysis results periodically
+        async function updateAnalysisResults() {
+            try {
+                const response = await fetch('/get_analysis_results');
+                const data = await response.json();
+
+                statusMessage.textContent = data.status_message;
+
+                detectedObjectsList.innerHTML = ''; // Clear previous list
+                if (data.detected_objects && data.detected_objects.length > 0) {
+                    const ul = document.createElement('ul');
+                    data.detected_objects.forEach(obj => {
+                        const li = document.createElement('li');
+                        li.textContent = `${obj.object_property} (Conf: ${obj.confidence.toFixed(2)}) at [${obj.rectangle.x}, ${obj.rectangle.y}, ${obj.rectangle.w}, ${obj.rectangle.h}]`;
+                        ul.appendChild(li);
+                    });
+                    detectedObjectsList.appendChild(ul);
+                } else if (data.status_message === "No Hat Detected.") {
+                     // Optionally, display a simpler message if no objects are detected and the status is "No Hat Detected."
+                     const p = document.createElement('p');
+                     p.textContent = "No specific objects detected with high confidence.";
+                     detectedObjectsList.appendChild(p);
+                }
+
+            } catch (error) {
+                console.error('Error fetching analysis results:', error);
+                statusMessage.textContent = "Error communicating with server.";
+            }
+        }
+
+        // Trigger analysis when the button is clicked
+        analyzeButton.addEventListener('click', async () => {
+            try {
+                statusMessage.textContent = "Requesting analysis...";
+                const response = await fetch('/analyze_frame', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+
+                if (data.status === "error") {
+                    console.error("Analysis request failed:", data.message);
+                    statusMessage.textContent = `Error: ${data.message}`;
+                } else {
+                    console.log("Analysis requested:", data.message);
+                    // The updateAnalysisResults will pick up the "Analyzing..." message
+                }
+            } catch (error) {
+                console.error('Error sending analysis request:', error);
+                statusMessage.textContent = "Error sending analysis request to server.";
+            }
+        });
+
+        // Update results every few seconds
+        setInterval(updateAnalysisResults, 1000); // Check for new results every 1 second
+
+        // Initial update when page loads
+        document.addEventListener('DOMContentLoaded', updateAnalysisResults);
+    </script>
+</body>
+</html>

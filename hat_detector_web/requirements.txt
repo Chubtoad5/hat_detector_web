@@ -1,0 +1,5 @@
+Flask
+opencv-python
+azure-cognitiveservices-vision-computervision
+msrest
+gunicorn
