@@ -8,14 +8,12 @@ from msrest.authentication import CognitiveServicesCredentials
 from io import BytesIO
 import threading
 import queue
-import logging # Import logging module
+import logging
 
 app = Flask(__name__)
 
 # --- Configure logging ---
-# This will ensure logs go to the systemd journal
-# For Gunicorn, it typically redirects stdout/stderr, which journald captures.
-# Setting up a basic handler ensures direct Python logging also goes there.
+# This ensures logs go to the systemd journal for easy monitoring
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
@@ -29,7 +27,6 @@ if not VISION_ENDPOINT or not VISION_KEY:
     # Assign placeholders to avoid immediate crash, but analysis will fail.
     VISION_ENDPOINT = VISION_ENDPOINT if VISION_ENDPOINT else "YOUR_AZURE_VISION_ENDPOINT_PLACEHOLDER"
     VISION_KEY = VISION_KEY if VISION_KEY else "YOUR_AZURE_VISION_KEY_PLACEHOLDER"
-
 
 # Authenticate with Azure Computer Vision
 computervision_client = None
@@ -46,7 +43,6 @@ except Exception as e:
     logger.error("Please check your VISION_ENDPOINT and VISION_KEY.")
     computervision_client = None
 
-
 # --- Webcam Configuration ---
 CAMERA_PORT = 0 # Typically /dev/video0 on Linux
 
@@ -62,9 +58,9 @@ last_analysis_triggered_time = 0
 
 # --- Threading for AI Analysis ---
 # Queue to send frames to the analysis thread
-analysis_queue = queue.Queue(maxsize=1)
+analysis_queue = queue.Queue(maxsize=1) # Max size 1 to always process the latest frame
 # Queue to receive results from the analysis thread
-analysis_result_queue = queue.Queue(maxsize=1)
+analysis_result_queue = queue.Queue(maxsize=1) # Max size 1 for the latest result
 
 # --- Path to the static placeholder image ---
 CAMERA_UNAVAILABLE_IMAGE_PATH = os.path.join(app.root_path, 'static', 'camera_unavailable.jpg')
@@ -82,7 +78,6 @@ except Exception as e:
     logger.error(f"Error loading placeholder image from {CAMERA_UNAVAILABLE_IMAGE_PATH}: {e}")
     camera_unavailable_image_bytes = None
 
-
 def get_camera():
     """Initializes or returns the camera object, handling re-attempts."""
     global camera
@@ -93,17 +88,26 @@ def get_camera():
     # Try to open/re-open camera
     logger.info(f"Attempting to open webcam at port {CAMERA_PORT}...")
     try:
-        camera = cv2.VideoCapture(CAMERA_PORT)
+        # Explicitly use CAP_V4L2 backend for Linux stability
+        camera = cv2.VideoCapture(CAMERA_PORT, cv2.CAP_V4L2)
+        # Set resolution (common standard, can be adjusted)
+        camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+        camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        camera.set(cv2.CAP_PROP_FPS, 30) # Attempt to set FPS
+
         if not camera.isOpened():
             logger.error(f"Error: Could not open webcam at port {CAMERA_PORT}. It might be disconnected, in use, or permissions are wrong.")
             camera = None # Ensure camera is None if opening fails
             return None # Indicate failure
 
+        # Give camera a moment to become ready for reading
+        time.sleep(1)
+
         # Try to read a frame to confirm it's actually working
         ret, _ = camera.read()
         if not ret:
-            logger.warning("Webcam opened, but failed to read initial frame. It might not be fully ready or is faulty.")
-            camera.release()
+            logger.warning("Webcam opened, but failed to read initial frame. It might not be fully ready or is faulty. Releasing camera.")
+            camera.release() # Release if initial read fails
             camera = None
             return None
 
@@ -111,9 +115,10 @@ def get_camera():
         return camera
     except Exception as e:
         logger.error(f"Exception during webcam opening: {e}")
+        if camera: # Ensure camera is released if exception occurred after creation
+            camera.release()
         camera = None
         return None
-
 
 def generate_frames():
     """Generator function to stream webcam frames as Motion JPEG or a placeholder."""
@@ -135,7 +140,6 @@ def generate_frames():
                 break # Exit loop if neither camera nor placeholder are available
 
             # Update status to indicate camera issue
-            # Use put_nowait to avoid blocking if queue is full
             try:
                 analysis_result_queue.put_nowait(("Webcam not found. Please connect and ensure proper mapping.", []))
             except queue.Full:
@@ -144,13 +148,20 @@ def generate_frames():
             continue # Continue loop to re-attempt camera access
 
         # If camera is available, proceed with live streaming
-        ret, frame = cam.read()
-        if not ret:
-            logger.warning("Failed to grab frame from camera. Attempting to re-initialize...")
+        try:
+            ret, frame = cam.read()
+            if not ret:
+                logger.warning("Failed to grab frame from camera (ret=False). Attempting to re-initialize...")
+                if camera: # If 'camera' is still not None, explicitly release it
+                    camera.release()
+                camera = None # Force re-initialization on next loop
+                continue # Try again in the next loop iteration
+        except Exception as e:
+            logger.error(f"Critical error during cam.read(): {e}. Releasing camera and re-initializing.")
             if camera:
                 camera.release()
-                camera = None # Force re-initialization on next loop
-            continue
+            camera = None # Force re-initialization
+            continue # Try again in the next loop iteration
 
         is_success, buffer = cv2.imencode(".jpg", frame)
         if not is_success:
@@ -188,9 +199,9 @@ def analyze_frame_thread_worker():
                 analysis_queue.task_done()
                 continue
 
-            # Ensure we're not trying to analyze a placeholder frame (output_frame could be None if camera is down)
+            # Ensure we're not trying to analyze a placeholder frame
             if camera_unavailable_image_bytes and frame_bytes_to_analyze == camera_unavailable_image_bytes:
-                analysis_result_queue.put(("Cannot analyze: Webcam not active.", []))
+                analysis_result_queue.put(("Cannot analyze: Webcam not active or placeholder image.", []))
                 analysis_queue.task_done()
                 continue
 
@@ -232,7 +243,6 @@ analysis_thread = threading.Thread(target=analyze_frame_thread_worker, daemon=Tr
 analysis_thread.start()
 logger.info("Analysis thread started.")
 
-
 @app.route('/')
 def index():
     """Serve the main web page."""
@@ -253,19 +263,75 @@ def analyze_frame():
     F0_MIN_INTERVAL = 3.5 # Minimum 3.5 seconds between requests for F0 tier (20 TPM)
     if (current_time - last_analysis_triggered_time) < F0_MIN_INTERVAL:
         remaining_time = F0_MIN_INTERVAL - (current_time - last_analysis_triggered_time)
+        logger.info(f"Rate limit triggered. Remaining time: {remaining_time:.1f}s")
         return jsonify({
             "status": "error",
             "message": f"Rate limit. Please wait {remaining_time:.1f} seconds."
         }), 429
+    
+    last_analysis_triggered_time = current_time # Update timestamp ONLY if not rate limited
 
-    # Check if a live frame is available, or if we're streaming the placeholder
+    frame_to_analyze_bytes = None
     with lock:
         # If output_frame is None, it means the camera is not active or no frame captured yet.
-        # We also explicitly check if it's the placeholder image bytes to prevent analysis.
-        if output_frame is None or (camera_unavailable_image_bytes and output_frame == camera_unavailable_image_bytes):
-            return jsonify({"status": "error", "message": "No live webcam frame available to analyze. Please connect your webcam."}), 503
+        if output_frame is None:
+            logger.warning("Attempted analysis with no live frame. output_frame is None.")
+            return jsonify({"status": "error", "message": "No live webcam frame available to analyze. Please ensure camera is streaming."}), 503
 
-        # If output_frame exists and is a valid frame, make a copy for encoding
-        frame_to_encode = output_frame.copy()
+        # Encode the frame from numpy array to JPEG bytes
+        is_success, buffer = cv2.imencode(".jpg", output_frame)
+        if not is_success:
+            logger.error("Failed to encode current frame for analysis.")
+            return jsonify({"status": "error", "message": "Failed to prepare image for analysis."}), 500
+        
+        frame_to_analyze_bytes = buffer.tobytes()
 
-    is_success, buffer
+    # Put the frame into the analysis queue for the background thread
+    try:
+        # Clear the queue before putting a new item to ensure we analyze the latest frame
+        while not analysis_queue.empty():
+            analysis_queue.get_nowait()
+        analysis_queue.put_nowait(frame_to_analyze_bytes)
+        logger.info("Frame sent to analysis queue.")
+    except queue.Full:
+        logger.warning("Analysis queue is full. Skipping analysis for this frame.")
+        return jsonify({"status": "warning", "message": "Analysis in progress, please wait."}), 429
+    except Exception as e:
+        logger.error(f"Error putting frame into analysis queue: {e}")
+        return jsonify({"status": "error", "message": "Internal server error during analysis initiation."}), 500
+
+    # Wait for the analysis result from the background thread
+    try:
+        # Clear previous results if any, to get the freshest one
+        while not analysis_result_queue.empty():
+            analysis_result_queue.get_nowait()
+        
+        # Wait for a result from the analysis thread for up to 60 seconds
+        status_message, detected_objects_data = analysis_result_queue.get(timeout=60)
+        logger.info(f"Analysis result received: {status_message}")
+        
+        # Convert detected objects for JSON serialization (bounding boxes)
+        serializable_objects = []
+        for obj in detected_objects_data:
+            serializable_objects.append({
+                "object_property": obj.object_property,
+                "confidence": obj.confidence,
+                "rectangle": {
+                    "x": obj.rectangle.x,
+                    "y": obj.rectangle.y,
+                    "w": obj.rectangle.w,
+                    "h": obj.rectangle.h
+                }
+            })
+
+        return jsonify({
+            "status": "success",
+            "message": status_message,
+            "detected_objects": serializable_objects
+        })
+    except queue.Empty:
+        logger.error("Timeout waiting for analysis result from worker thread.")
+        return jsonify({"status": "error", "message": "Analysis timed out. Please try again."}), 500
+    except Exception as e:
+        logger.error(f"Error retrieving analysis result: {e}")
+        return jsonify({"status": "error", "message": f"Failed to get analysis results: {e}"}), 500
