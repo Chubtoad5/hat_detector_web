@@ -100,15 +100,21 @@ Description=Hat Detector Web App
 After=network.target multi-user.target
 
 [Service]
-User=$WEB_SERVICE_USER
-Group=$WEB_SERVICE_GROUP
-WorkingDirectory=$INSTALL_PATH
+TimeoutStopSec=180
+DeviceAllow=/dev/video0 rw
+User=hat
+Group=hat
+WorkingDirectory=/opt/hat_detector_web_app_local
 
-Environment="AZURE_VISION_ENDPOINT=https://js-ai-demo2.cognitiveservices.azure.com/"
-Environment="AZURE_VISION_KEY=5w2BGU8KPtI1aMZFmhsUHiwT46zY1IdahlxT0RrxKK2YwbZUyvFfJQQJ99BFACBsN54XJ3w3AAAFACOGmJio"
+
+Environment="AZURE_VISION_ENDPOINT=XXXXXXXXX.cognitiveservices.azure.com/"
+Environment="AZURE_VISION_SUBSCRIPTION_KEY=XXXXXXXXXXXXXXXXXXXXXX"
 
 # Gunicorn now binds to a non-privileged port, Nginx will proxy to it
-ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:8000 --timeout 120 app:app
+#ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:8000 --timeout 300 app:app
+#ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 192.168.1.98:8000 --timeout 120 app:app
+ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:8000 --timeout 120 app:app
+
 
 ReadWritePaths=/dev/video0
 
@@ -121,6 +127,7 @@ RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
+
 EOF
 
 # --- 7. Configure Nginx as a Reverse Proxy ---
