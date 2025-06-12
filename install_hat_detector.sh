@@ -104,11 +104,11 @@ User=$WEB_SERVICE_USER
 Group=$WEB_SERVICE_GROUP
 WorkingDirectory=$INSTALL_PATH
 
-Environment="VISION_ENDPOINT=$AZURE_VISION_ENDPOINT"
-Environment="VISION_KEY=$AZURE_VISION_KEY"
+Environment="AZURE_VISION_ENDPOINT=https://js-ai-demo2.cognitiveservices.azure.com/"
+Environment="AZURE_VISION_KEY=5w2BGU8KPtI1aMZFmhsUHiwT46zY1IdahlxT0RrxKK2YwbZUyvFfJQQJ99BFACBsN54XJ3w3AAAFACOGmJio"
 
 # Gunicorn now binds to a non-privileged port, Nginx will proxy to it
-ExecStart=$INSTALL_PATH/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:$GUNICORN_PORT app:app
+ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:8000 --timeout 120 app:app
 
 ReadWritePaths=/dev/video0
 
