@@ -4,88 +4,280 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Hat Detector</title>
-    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🎩</text></svg>">
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin-top: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        h1 {
+            color: #2c3e50;
+        }
+        #video-container {
+            border: 2px solid #3498db;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+        }
+        #videoElement {
+            display: block;
+            max-width: 100%;
+            height: auto;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            background-color: #28a745;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s ease;
+            margin-bottom: 20px; /* Space between button and results */
+        }
+        button:hover {
+            background-color: #218838;
+        }
+        #analysis-status {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #3498db;
+        }
+        /* New style for hat detection status */
+        #hat-detection-status {
+            font-size: 1.8em; /* Larger font size */
+            font-weight: bold;
+            margin: 20px 0; /* Spacing */
+            color: #e74c3c; /* Default: Red for "No hat" */
+            text-align: center;
+            padding: 10px;
+            border: 2px dashed #e74c3c;
+            border-radius: 5px;
+            width: 80%;
+            max-width: 600px;
+            background-color: #ffeaea;
+            transition: color 0.5s ease, border-color 0.5s ease, background-color 0.5s ease;
+        }
+        #hat-detection-status.hat-detected {
+            color: #28a745; /* Green when hat is detected */
+            border-color: #28a745;
+            background-color: #eafbea;
+        }
+
+        #analysis-results-container {
+            background-color: #ffffff;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 20px;
+            width: 80%;
+            max-width: 600px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.05);
+            margin-top: 20px; /* Added space above results container */
+        }
+        #analysis-results-container h2 {
+            color: #2c3e50;
+            margin-top: 0;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+        }
+        #analysis-results-container p, #analysis-results-container ul {
+            margin-bottom: 10px;
+        }
+        #analysis-results-container ul {
+            list-style-type: disc;
+            padding-left: 20px;
+        }
+        #analysis-results-container li {
+            margin-bottom: 5px;
+        }
+    </style>
 </head>
 <body>
-    <div class="container">
-        <h1>Hat Detector</h1>
-        <div class="video-container">
-            <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Webcam Feed">
-        </div>
-        <div class="controls">
-            <button id="analyzeButton">Analyze Frame</button>
-        </div>
-        <div class="status-box">
-            <p>Status: <span id="statusMessage">Initializing...</span></p>
-            <div id="detectedObjectsList">
-                </div>
-        </div>
+    <h1>Hat Detector Web App</h1>
+
+    <div id="video-container">
+        <img id="videoElement" src="{{ url_for('video_feed') }}" alt="Video Feed">
+    </div>
+
+    <button id="analyzeButton">Analyze Frame</button>
+    <div id="analysis-status"></div>
+
+    <div id="hat-detection-status">I don't see a hat.</div>
+
+    <div id="analysis-results-container" style="display: none;">
+        <h2>Detailed Analysis Results</h2>
+        <p><strong>Description:</strong> <span id="description-text"></span></p>
+        <p><strong>Tags:</strong></p>
+        <ul id="tags-list"></ul>
+        <p><strong>Objects Detected:</strong></p>
+        <ul id="objects-list"></ul>
     </div>
 
     <script>
         const analyzeButton = document.getElementById('analyzeButton');
-        const statusMessage = document.getElementById('statusMessage');
-        const detectedObjectsList = document.getElementById('detectedObjectsList');
-        const videoFeed = document.getElementById('videoFeed');
+        const analysisStatusDiv = document.getElementById('analysis-status');
+        const hatDetectionStatusDiv = document.getElementById('hat-detection-status'); // New element
+        const analysisResultsContainer = document.getElementById('analysis-results-container');
+        const descriptionTextSpan = document.getElementById('description-text');
+        const tagsListUl = document.getElementById('tags-list');
+        const objectsListUl = document.getElementById('objects-list');
 
-        // Function to update analysis results periodically
-        async function updateAnalysisResults() {
-            try {
-                const response = await fetch('/get_analysis_results');
-                const data = await response.json();
+        let currentAnalysisRequestId = null;
+        let pollingInterval = null;
 
-                statusMessage.textContent = data.status_message;
+        // Initial state for hat detection
+        resetHatDetectionStatus();
 
-                detectedObjectsList.innerHTML = ''; // Clear previous list
-                if (data.detected_objects && data.detected_objects.length > 0) {
-                    const ul = document.createElement('ul');
-                    data.detected_objects.forEach(obj => {
-                        const li = document.createElement('li');
-                        li.textContent = `${obj.object_property} (Conf: ${obj.confidence.toFixed(2)}) at [${obj.rectangle.x}, ${obj.rectangle.y}, ${obj.rectangle.w}, ${obj.rectangle.h}]`;
-                        ul.appendChild(li);
-                    });
-                    detectedObjectsList.appendChild(ul);
-                } else if (data.status_message === "No Hat Detected.") {
-                     // Optionally, display a simpler message if no objects are detected and the status is "No Hat Detected."
-                     const p = document.createElement('p');
-                     p.textContent = "No specific objects detected with high confidence.";
-                     detectedObjectsList.appendChild(p);
-                }
-
-            } catch (error) {
-                console.error('Error fetching analysis results:', error);
-                statusMessage.textContent = "Error communicating with server.";
-            }
-        }
-
-        // Trigger analysis when the button is clicked
         analyzeButton.addEventListener('click', async () => {
+            analysisStatusDiv.textContent = 'Analysis started...';
+            analysisResultsContainer.style.display = 'none'; // Hide previous detailed results
+            clearResults();
+            resetHatDetectionStatus(); // Reset hat status on new analysis
+
             try {
-                statusMessage.textContent = "Requesting analysis...";
-                const response = await fetch('/analyze_frame', {
-                    method: 'POST'
-                });
+                const response = await fetch('/analyze_current_frame');
                 const data = await response.json();
 
-                if (data.status === "error") {
-                    console.error("Analysis request failed:", data.message);
-                    statusMessage.textContent = `Error: ${data.message}`;
+                if (data.status === 'Analysis started' && data.request_id) {
+                    currentAnalysisRequestId = data.request_id;
+                    analysisStatusDiv.textContent = `Analysis in progress (ID: ${currentAnalysisRequestId})...`;
+                    startPollingAnalysisStatus();
                 } else {
-                    console.log("Analysis requested:", data.message);
-                    // The updateAnalysisResults will pick up the "Analyzing..." message
+                    analysisStatusDiv.textContent = `Error: ${data.message || 'Failed to start analysis.'}`;
+                    console.error('Failed to start analysis:', data.message);
                 }
             } catch (error) {
-                console.error('Error sending analysis request:', error);
-                statusMessage.textContent = "Error sending analysis request to server.";
+                analysisStatusDiv.textContent = `Error: Could not connect to analysis service.`;
+                console.error('Fetch error:', error);
             }
         });
 
-        // Update results every few seconds
-        setInterval(updateAnalysisResults, 1000); // Check for new results every 1 second
+        function startPollingAnalysisStatus() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
 
-        // Initial update when page loads
-        document.addEventListener('DOMContentLoaded', updateAnalysisResults);
+            pollingInterval = setInterval(async () => {
+                if (!currentAnalysisRequestId) {
+                    clearInterval(pollingInterval);
+                    return;
+                }
+
+                try {
+                    const response = await fetch(`/get_analysis_status/${currentAnalysisRequestId}`);
+                    const data = await response.json();
+
+                    if (data.status === 'completed') {
+                        clearInterval(pollingInterval);
+                        analysisStatusDiv.textContent = 'Analysis complete!';
+                        displayResults(data.result);
+                        analysisResultsContainer.style.display = 'block'; // Show detailed results container
+                    } else if (data.status === 'failed') {
+                        clearInterval(pollingInterval);
+                        analysisStatusDiv.textContent = `Analysis failed: ${data.message}`;
+                        console.error('Analysis failed:', data.message);
+                        resetHatDetectionStatus(); // Reset hat status on failure
+                    } else if (data.status === 'not_found') {
+                        clearInterval(pollingInterval);
+                        analysisStatusDiv.textContent = 'Analysis request not found or expired. Please try again.';
+                        resetHatDetectionStatus(); // Reset hat status
+                    }
+                    // If status is 'pending', keep polling
+                } catch (error) {
+                    clearInterval(pollingInterval);
+                    analysisStatusDiv.textContent = `Error polling status: ${error.message}`;
+                    console.error('Polling error:', error);
+                    resetHatDetectionStatus(); // Reset hat status on error
+                }
+            }, 1000); // Poll every 1 second
+        }
+
+        function clearResults() {
+            descriptionTextSpan.textContent = '';
+            tagsListUl.innerHTML = '';
+            objectsListUl.innerHTML = '';
+        }
+
+        function resetHatDetectionStatus() {
+            hatDetectionStatusDiv.textContent = "I don't see a hat.";
+            hatDetectionStatusDiv.classList.remove('hat-detected');
+        }
+
+        function displayResults(result) {
+            let hatDetected = false;
+            let hatInfo = "";
+
+            // Check for 'hat' in objects
+            if (result.objects && result.objects.length > 0) {
+                for (const obj of result.objects) {
+                    if (obj.object_property.toLowerCase().includes('hat') || obj.object_property.toLowerCase().includes('cap')) {
+                        hatDetected = true;
+                        hatInfo = `I see a ${obj.object_property} (Confidence: ${Math.round(obj.confidence * 100)}%)`;
+                        break; // Found a hat, no need to check further objects
+                    }
+                }
+            }
+
+            // If no hat found in objects, check for 'hat' in tags
+            if (!hatDetected && result.tags && result.tags.length > 0) {
+                for (const tag of result.tags) {
+                    if (tag.name.toLowerCase().includes('hat') || tag.name.toLowerCase().includes('headgear') || tag.name.toLowerCase().includes('cap')) {
+                        hatDetected = true;
+                        hatInfo = `I detect a hat/headgear (Confidence: ${Math.round(tag.confidence * 100)}%)`;
+                        break; // Found a hat-related tag
+                    }
+                }
+            }
+
+            // Update Hat Detection Status
+            if (hatDetected) {
+                hatDetectionStatusDiv.textContent = hatInfo;
+                hatDetectionStatusDiv.classList.add('hat-detected');
+            } else {
+                resetHatDetectionStatus(); // Ensure it reverts if no hat is found in new analysis
+            }
+
+
+            // --- Display Detailed Analysis Results (existing logic) ---
+
+            // Description
+            if (result.description && result.description.captions && result.description.captions.length > 0) {
+                const caption = result.description.captions[0];
+                descriptionTextSpan.textContent = `"${caption.text}" (Confidence: ${Math.round(caption.confidence * 100)}%)`;
+            } else {
+                descriptionTextSpan.textContent = 'No detailed description available.';
+            }
+
+            // Tags
+            if (result.tags && result.tags.length > 0) {
+                tagsListUl.innerHTML = ''; // Clear previous list
+                result.tags.forEach(tag => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = `${tag.name} (Confidence: ${Math.round(tag.confidence * 100)}%)`;
+                    tagsListUl.appendChild(listItem);
+                });
+            } else {
+                tagsListUl.innerHTML = '<li>No significant tags found.</li>';
+            }
+
+            // Objects
+            if (result.objects && result.objects.length > 0) {
+                objectsListUl.innerHTML = ''; // Clear previous list
+                result.objects.forEach(obj => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = `${obj.object_property} (Confidence: ${Math.round(obj.confidence * 100)}%)`;
+                    objectsListUl.appendChild(listItem);
+                });
+            } else {
+                objectsListUl.innerHTML = '<li>No specific objects detected.</li>';
+            }
+        }
     </script>
 </body>
 </html>
