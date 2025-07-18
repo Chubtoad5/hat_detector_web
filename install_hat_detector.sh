@@ -98,25 +98,29 @@ cat <<EOF | tee "$SERVICE_FILE"
 [Unit]
 Description=Hat Detector Web App
 After=network.target multi-user.target
+Wants=network.target
 
 [Service]
 TimeoutStopSec=180
-DeviceAllow=/dev/video0 rw
+#DeviceAllow=/dev/video0 rw
 User=hat
 Group=hat
 WorkingDirectory=/opt/hat_detector_web_app_local
 
 
-Environment="AZURE_VISION_ENDPOINT=XXXXXXXXX.cognitiveservices.azure.com/"
-Environment="AZURE_VISION_SUBSCRIPTION_KEY=XXXXXXXXXXXXXXXXXXXXXX"
+Environment="AZURE_VISION_ENDPOINT=ADD_AZURE_ENDPOINT HERE"
+Environment="AZURE_VISION_SUBSCRIPTION_KEY=ADD_KEY_HERE"
 
 # Gunicorn now binds to a non-privileged port, Nginx will proxy to it
-#ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 0.0.0.0:8000 --timeout 300 app:app
-#ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --workers 1 --bind 192.168.1.98:8000 --timeout 120 app:app
-ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --worker-class gevent --workers 1 --bind 0.0.0.0:8000 --timeout 120 app:app
+ExecStart=/opt/hat_detector_web_app_local/venv/bin/gunicorn --preload --workers 3 --bind 0.0.0.0:8000 --timeout 120 app:app
 
 
+#ReadWritePaths=/dev/video0
+
+DevicePolicy=auto
+DeviceAllow=/dev/video0 rw
 ReadWritePaths=/dev/video0
+
 
 StandardOutput=syslog
 StandardError=syslog
@@ -186,11 +190,11 @@ fi
 # --- 9. Configure Firewall (UFW for Ubuntu, Firewalld for CentOS/Fedora) ---
 echo "9. Configuring firewall to allow port 80..."
 if command -v ufw &> /dev/null; then
-    ufw allow 80/tcp || echo "Warning: Failed to allow port 80 in UFW. Check manually."
+    ufw allow 8000/tcp || echo "Warning: Failed to allow port 80 in UFW. Check manually."
     ufw reload || echo "Warning: Failed to reload UFW. Check manually."
     ufw enable || echo "Warning: UFW not enabled. Enabling it might block other services. Check manually."
 elif command -v firewall-cmd &> /dev/null; then
-    firewall-cmd --add-port=80/tcp --permanent || echo "Warning: Failed to add port 80 in Firewalld. Check manually."
+    firewall-cmd --add-port=8000/tcp --permanent || echo "Warning: Failed to add port 8000 in Firewalld. Check manually."
     firewall-cmd --reload || echo "Warning: Failed to reload Firewalld. Check manually."
 else
     echo "Warning: No UFW or Firewalld found. Please configure your firewall manually if needed."
