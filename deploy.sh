@@ -36,6 +36,16 @@ else
     useradd -r -s /bin/false $APP_USER
     echo "User '$APP_USER' created."
 fi
+
+# Add the app user to the 'video' group for camera access
+usermod -a -G video $APP_USER
+
+# Add the Nginx user to the app's group for socket access
+usermod -a -G $APP_USER www-data
+
+# Set correct directory permissions for Nginx access
+chmod 755 $APP_DIR
+
 mkdir -p $APP_DIR/templates
 mkdir -p $APP_DIR/static
 chown -R $APP_USER:$APP_USER $APP_DIR
