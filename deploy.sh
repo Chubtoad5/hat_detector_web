@@ -3,20 +3,28 @@
 # =============================================================================
 # All-in-One Deployment Script for the Hat Detector Application
 # =============================================================================
-# This script will:
-# 1. Install all necessary system packages.
-# 2. Create a dedicated user and directory for the app.
-# 3. Create all application and configuration files.
-# 4. Set up and start the systemd services.
-# 5. Configure Nginx as a reverse proxy.
-# =============================================================================
 
 # --- Script Configuration ---
 set -e # Exit immediately if a command exits with a non-zero status.
 
-# --- Variables ---
+# =============================================================================
+# CONFIGURATION - EDIT THESE VARIABLES
+# =============================================================================
+# --- Azure Computer Vision Credentials ---
+AZURE_VISION_KEY="YOUR_AZURE_KEY_HERE"
+AZURE_VISION_ENDPOINT="YOUR_AZURE_ENDPOINT_HERE"
+
+# --- RTSP Stream URL ---
+# Example: "rtsp://admin:password@192.168.1.100/stream1"
+# Example for secure stream: "rtsp://192.168.1.1:7441/L0DUQ6167DCp9BE3"
+RTSP_URL="rtsp://192.168.1.1:7441/L0DUQ6167DCp9BE"
+
+# --- Application User and Directory ---
 APP_USER="hat"
 APP_DIR="/opt/hat_detector_web_app"
+# =============================================================================
+# END OF CONFIGURATION
+# =============================================================================
 
 # --- Check for Root ---
 if [ "$(id -u)" -ne 0 ]; then
@@ -24,30 +32,35 @@ if [ "$(id -u)" -ne 0 ]; then
   exit 1
 fi
 
+# --- Check if variables have been configured ---
+if [[ "$AZURE_VISION_KEY" == "YOUR_AZURE_KEY_HERE" || "$AZURE_VISION_ENDPOINT" == "YOUR_AZURE_ENDPOINT_HERE" ]]; then
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "!!! ERROR: Please edit this script and set your Azure    !!!"
+  echo "!!!        credentials in the CONFIGURATION section.     !!!"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  exit 1
+fi
+
 echo "--- [Step 1/8] Updating system and installing prerequisites... ---"
 apt-get update
-apt-get install -y python3-venv python3-pip nginx ffmpeg
+apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils
 
 echo "--- [Step 2/8] Creating application user and directory... ---"
-# Create user if it doesn't exist
 if id "$APP_USER" &>/dev/null; then
-    echo "User '$APP_USER' already exists. Skipping creation."
+    echo "User '$APP_USER' already exists."
 else
     useradd -r -s /bin/false $APP_USER
     echo "User '$APP_USER' created."
 fi
-
-# Add the app user to the 'video' group for camera access
+# Add user to the 'video' group for camera access
 usermod -a -G video $APP_USER
-
 # Add the Nginx user to the app's group for socket access
 usermod -a -G $APP_USER www-data
 
-# Set correct directory permissions for Nginx access
-chmod 755 $APP_DIR
-
 mkdir -p $APP_DIR/templates
 mkdir -p $APP_DIR/static
+# Set correct directory permissions for Nginx access
+chmod 755 $APP_DIR
 chown -R $APP_USER:$APP_USER $APP_DIR
 
 echo "--- [Step 3/8] Creating application files... ---"
@@ -61,11 +74,16 @@ numpy
 azure-cognitiveservices-vision-computervision
 msrest
 tenacity
+sdnotify
+gevent
 EOF
 echo "Created requirements.txt"
 
 # --- app.py ---
 cat <<'EOF' > $APP_DIR/app.py
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import os
 import cv2
 import numpy as np
@@ -244,6 +262,9 @@ echo "Created app.py"
 
 # --- camera_manager.py ---
 cat <<'EOF' > $APP_DIR/camera_manager.py
+import gevent.monkey
+gevent.monkey.patch_all()
+
 import cv2
 import numpy as np
 import time
@@ -257,8 +278,10 @@ import sys
 # CONFIGURATION
 # =============================================================================
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-RTSP_STREAM_URL = os.environ.get("RTSP_STREAM_URL", "rtsp://192.168.29.26/axis-media/media.amp")
-os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp'
+RTSP_STREAM_URL = os.environ.get("RTSP_STREAM_URL")
+
+# Set a long timeout (60 seconds) for FFMPEG to be more patient with streams
+os.environ['OPENCV_FFMPEG_CAPTURE_OPTIONS'] = 'rtsp_transport;tcp|timeout;60000000'
 
 FRAME_HEIGHT = 720
 FRAME_WIDTH = 1280
@@ -272,16 +295,17 @@ shm = None
 camera = None
 
 def cleanup(signum, frame):
-    """Graceful cleanup function to be called by the signal handler."""
+    """Graceful cleanup function."""
     global shm, camera
-    logging.info(f"Caught signal {signum}. Starting graceful shutdown...")
+    logging.info(f"Caught signal {signum}. Shutting down...")
     if camera and camera.isOpened():
         camera.release()
-        logging.info("Camera resource released.")
     if shm:
         shm.close()
-        shm.unlink() # Deletes the shared memory block
-        logging.info("Shared memory cleaned up.")
+        try:
+            shm.unlink()
+        except FileNotFoundError:
+            pass
     logging.info("Shutdown complete.")
     sys.exit(0)
 
@@ -294,45 +318,50 @@ def get_camera_source():
         return 'local'
 
 def run_camera():
-    """Main camera loop with robust cleanup."""
+    """Main camera loop with robust reconnection."""
     global shm, camera
-
+    
     signal.signal(signal.SIGTERM, cleanup)
     signal.signal(signal.SIGINT, cleanup)
 
     try:
-        try:
-            shared_memory.SharedMemory(name=SHM_NAME).unlink()
-        except FileNotFoundError:
-            pass
-
         shm = shared_memory.SharedMemory(name=SHM_NAME, create=True, size=SHARED_BUFFER_SIZE)
-        shared_frame_array = np.ndarray((FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8, buffer=shm.buf)
+    except FileExistsError:
+        shm = shared_memory.SharedMemory(name=SHM_NAME)
 
-        source_type = get_camera_source()
-        logging.info(f"Starting camera for source: {source_type}")
+    shared_frame_array = np.ndarray((FRAME_HEIGHT, FRAME_WIDTH, FRAME_CHANNELS), dtype=np.uint8, buffer=shm.buf)
+    
+    while True:
+        try:
+            source_type = get_camera_source()
+            logging.info(f"Attempting to connect to camera source: {source_type}")
 
-        camera = cv2.VideoCapture(0) if source_type == 'local' else cv2.VideoCapture(RTSP_STREAM_URL, cv2.CAP_FFMPEG)
-        if not camera or not camera.isOpened():
-            raise IOError(f"Failed to open camera for source {source_type}.")
+            camera = cv2.VideoCapture(0, cv2.CAP_V4L2) if source_type == 'local' else cv2.VideoCapture(RTSP_STREAM_URL, cv2.CAP_FFMPEG)
+            if not camera or not camera.isOpened():
+                raise IOError(f"Failed to open camera for source {source_type}.")
+            
+            logging.info("Camera opened successfully. Starting frame capture.")
 
-        logging.info("Camera opened. Starting frame capture.")
-        while True:
-            ret, frame = camera.read()
-            if not ret or frame is None:
-                logging.warning("Failed to grab frame. Retrying...")
-                time.sleep(2)
-                continue
-
-            if frame.shape[0] != FRAME_HEIGHT or frame.shape[1] != FRAME_WIDTH:
-                frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
-
-            shared_frame_array[:] = frame[:]
-            time.sleep(0.01)
-
-    except Exception as e:
-        logging.error(f"Camera manager encountered a critical error: {e}", exc_info=True)
-        cleanup(None, None)
+            while True:
+                ret, frame = camera.read()
+                if not ret or frame is None:
+                    logging.warning("Failed to grab frame. Breaking to reconnect...")
+                    break 
+                
+                if frame.shape[0] != FRAME_HEIGHT or frame.shape[1] != FRAME_WIDTH:
+                    frame = cv2.resize(frame, (FRAME_WIDTH, FRAME_HEIGHT))
+                
+                shared_frame_array[:] = frame[:]
+                time.sleep(0.01)
+        
+        except Exception as e:
+            logging.error(f"Error in main camera loop: {e}")
+        
+        finally:
+            if camera:
+                camera.release()
+            logging.info("Camera resource released. Waiting 5s before reconnect...")
+            time.sleep(5)
 
 if __name__ == '__main__':
     run_camera()
@@ -471,7 +500,7 @@ cat <<'EOF' > $APP_DIR/templates/index.html
                 objectsList.innerHTML = '<li>No objects detected.</li>';
              }
         }
-
+        
         function clearAnalysisDetails() {
             descriptionText.textContent = 'No analysis yet.';
             tagsList.textContent = 'No analysis yet.';
@@ -491,7 +520,6 @@ else
     echo "WARNING: camera_unavailable.jpg not found. The placeholder will not work."
 fi
 
-# Set ownership of all created files
 chown -R $APP_USER:$APP_USER $APP_DIR
 
 echo "--- [Step 4/8] Setting up Python virtual environment... ---"
@@ -501,7 +529,8 @@ sudo -u $APP_USER $APP_DIR/venv/bin/pip install -r $APP_DIR/requirements.txt
 echo "--- [Step 5/8] Creating Systemd service files... ---"
 
 # --- camera.service ---
-cat <<'EOF' > /etc/systemd/system/camera.service
+# Note: Variable expansion is used here for $RTSP_URL
+cat <<EOF > /etc/systemd/system/camera.service
 [Unit]
 Description=Hat Detector Camera Service
 After=network.target
@@ -509,11 +538,11 @@ After=network.target
 [Service]
 ExecStart=/opt/hat_detector_web_app/venv/bin/python3 /opt/hat_detector_web_app/camera_manager.py
 WorkingDirectory=/opt/hat_detector_web_app
-StandardOutput=journal
-StandardError=journal
 Restart=always
 User=hat
 Group=video
+ReadWritePaths=/dev/shm
+Environment="RTSP_STREAM_URL=$RTSP_URL"
 
 [Install]
 WantedBy=multi-user.target
@@ -521,20 +550,18 @@ EOF
 echo "Created camera.service"
 
 # --- hat-detector.service ---
-cat <<'EOF' > /etc/systemd/system/hat-detector.service
+# Note: Variable expansion is used here for Azure credentials
+cat <<EOF > /etc/systemd/system/hat-detector.service
 [Unit]
 Description=Hat Detector Web App
 After=network.target camera.service
 Wants=camera.service
 
 [Service]
-# Set Azure Credentials here
-# Environment="AZURE_VISION_SUBSCRIPTION_KEY=YOUR_KEY"
-# Environment="AZURE_VISION_ENDPOINT=YOUR_ENDPOINT"
-# Set RTSP URL here if desired
-# Environment="RTSP_STREAM_URL=rtsp://your.stream.url"
+Environment="AZURE_VISION_SUBSCRIPTION_KEY=$AZURE_VISION_KEY"
+Environment="AZURE_VISION_ENDPOINT=$AZURE_VISION_ENDPOINT"
 
-ExecStart=/opt/hat_detector_web_app/venv/bin/gunicorn --workers 3 --bind unix:hat-detector.sock -m 007 app:app
+ExecStart=/opt/hat_detector_web_app/venv/bin/gunicorn --workers 3 --worker-class gevent --bind unix:hat-detector.sock -m 007 app:app
 WorkingDirectory=/opt/hat_detector_web_app
 StandardOutput=journal
 StandardError=journal
@@ -561,13 +588,12 @@ server {
     }
 }
 EOF
-# Enable the site and remove the default
 ln -sf /etc/nginx/sites-available/hat-detector /etc/nginx/sites-enabled
 rm -f /etc/nginx/sites-enabled/default
+aa-complain /etc/apparmor.d/usr.sbin.nginx 2>/dev/null || echo "AppArmor profile for Nginx not found, skipping."
 echo "Created Nginx configuration."
 
 echo "--- [Step 7/8] Setting up sudo permissions... ---"
-# Create a file in /etc/sudoers.d/ for safe sudo permission handling
 cat <<'EOF' > /etc/sudoers.d/hat-detector-sudo
 hat ALL=(ALL) NOPASSWD: /bin/systemctl restart camera.service
 EOF
@@ -578,9 +604,7 @@ echo "--- [Step 8/8] Activating services... ---"
 systemctl daemon-reload
 systemctl enable camera.service
 systemctl enable hat-detector.service
-# Restart Nginx to apply new config
 systemctl restart nginx
-# Restart our services
 systemctl restart camera.service
 systemctl restart hat-detector.service
 
@@ -591,13 +615,7 @@ echo "============================================================"
 echo "Your application should now be available at your server's IP address."
 echo "Example: http://$(hostname -I | awk '{print $1}')"
 echo ""
-echo "IMPORTANT: Azure analysis will not work until you add your credentials."
-echo "Edit the web app service file:"
-echo "  sudo systemctl edit --full hat-detector.service"
-echo "And add your keys under the [Service] section, like this:"
-echo "  Environment=\"AZURE_VISION_SUBSCRIPTION_KEY=YOUR_KEY\""
-echo "  Environment=\"AZURE_VISION_ENDPOINT=YOUR_ENDPOINT\""
-echo "Then run: sudo systemctl restart hat-detector.service"
+echo "Configuration has been applied from the variables in this script."
 echo "============================================================"
 
 exit 0
