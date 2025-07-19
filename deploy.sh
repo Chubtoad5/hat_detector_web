@@ -1,5 +1,12 @@
 #!/bin/bash
 
+#To run download/run use these commands.  Don't forget to edit the configuration variabes Azure/RTSP first.
+
+#wget -L https://raw.githubusercontent.com/timeisanillusion/hat_detector_web/refs/heads/main/deploy.sh
+#wget -L https://raw.githubusercontent.com/timeisanillusion/hat_detector_web/refs/heads/main/camera_unavailable.jpg
+#chmod +x deploy.sh
+#sudo ./deploy.sh
+
 # =============================================================================
 # All-in-One Deployment Script for the Hat Detector Application
 # =============================================================================
