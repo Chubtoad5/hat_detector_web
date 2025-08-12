@@ -480,7 +480,7 @@ cat <<'EOF' > $APP_DIR/templates/index.html
                 const response = await fetch('/analyze_current_frame');
                 const data = await response.json();
                 if (data.status === 'success') {
-                    statusMessageDiv.textContent = `Analysis complete. Found ${data.analysis_data.hat_objects.length} hat(s).`;
+                    statusMessageDiv.textContent = `Analysis complete.`;
                     populateAnalysisDetails(data.analysis_data);
                 } else {
                     statusMessageDiv.textContent = `Error: ${data.message || 'Unknown error'}`;
