@@ -412,7 +412,7 @@ cat <<'EOF' > $APP_DIR/templates/index.html
             <button id="localCamButton">Use Local Camera</button>
             <button id="rtspCamButton">Use RTSP Stream</button>
         </div>
-        <button id="analyzeButton">Analyze Frame for Hats</button>
+        <button id="analyzeButton">Analyze Frame</button>
         <div id="statusMessage">Using Local Camera</div>
     </div>
 
