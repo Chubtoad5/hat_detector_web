@@ -8,11 +8,11 @@ This guide explains how to deploy the Hat Detector application on a new server u
 
 PREREQUISITES
 -------------
-1. A server running Ubuntu 22.04.
-2. Sudo (root) access on the server.
-3. The `deploy.sh` script and your `camera_unavailable.jpg` image file.
-4. Your **Azure Computer Vision credentials** (Key and Endpoint).
-5. The URL for your **RTSP stream** (if you plan to use it).
+
+1. Sudo (root) access on the server.
+2. The `deploy.sh` script and your `camera_unavailable.jpg` image file.
+3. Your **Azure Computer Vision credentials** (Key and Endpoint).
+4. The URL for your **RTSP stream** (if you plan to use it).
 
 DEPLOYMENT STEPS
 ----------------
