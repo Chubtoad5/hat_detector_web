@@ -1,14 +1,15 @@
 ======================================
-Hat Detector Application - Deployment Guide
+Image Detector Application - Deployment Guide
 ======================================
 
 OVERVIEW
 --------
-This guide explains how to deploy the Hat Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
+This guide explains how to deploy the Image Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
+
+This applications takes a local video feed (i.e. from a USB Webcam, presented via /dev/video0) and from an RTSP URL provided during setup.
 
 PREREQUISITES
 -------------
-
 1. Sudo (root) access on the server.
 2. The `deploy.sh` script and your `camera_unavailable.jpg` image file.
 3. Your **Azure Computer Vision credentials** (Key and Endpoint).
