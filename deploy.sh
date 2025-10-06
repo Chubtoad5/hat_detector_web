@@ -50,7 +50,8 @@ fi
 
 echo "--- [Step 1/8] Updating system and installing prerequisites... ---"
 apt-get update
-apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils
+DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) linux-modules-$(uname -r) linux-modules-extra-$(uname -r)
 
 echo "--- [Step 2/8] Creating application user and directory... ---"
 if id "$APP_USER" &>/dev/null; then
