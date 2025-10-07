@@ -29,7 +29,7 @@ git clone https://github.com/Chubtoad5/object_detector_web.git
 ```
 2. Make `deploy.sh` executable
 ```
-cd object-detector-web
+cd object_detector_web
 chmod +x deploy.sh
 ```
 3. Edit `deploy.sh` and update AZURE_VISION_KEY and AZURE_VISION_ENDPOINT with valid credentials, optionally update RTSP_URL if using an accessible RTSP stream.
@@ -41,7 +41,7 @@ sudo ./deploy.sh
 
 Since the app supports frontend variables, it can be installed with one line:
 ```
-git clone https://github.com/Chubtoad5/object_detector_web.git; cd object-detector-web; chmod +x deploy.sh; AZURE_VISION_KEY="MY_KEY" AZURE_VISION_ENDPOINT="MY_ENDPOINT" RTSP_URL="http://my_rtsp/url" sudo ./deploy.sh
+sudo -s ; git clone https://github.com/Chubtoad5/object_detector_web.git; cd object_detector_web; chmod +x deploy.sh; AZURE_VISION_KEY="MY_KEY" AZURE_VISION_ENDPOINT="MY_ENDPOINT" RTSP_URL="rtsp://my_rtsp/url" ./deploy.sh
 ```
 
 
