@@ -1,84 +1,52 @@
-======================================
-Image Detector Application - Deployment Guide
-======================================
 
-OVERVIEW
---------
-This guide explains how to deploy the Image Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
+# Object Detector Application - Deployment Guide
+
+
+## OVERVIEW
+
+This guide explains how to deploy the Ojbect Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
 
 This applications takes a local video feed (i.e. from a USB Webcam, presented via /dev/video0) and from an RTSP URL provided during setup.
 
-PREREQUISITES
--------------
+## PREREQUISITES
+
 1. Sudo (root) access on the server.
 2. The `deploy.sh` script and your `camera_unavailable.jpg` image file.
 3. Your **Azure Computer Vision credentials** (Key and Endpoint).
 4. The URL for your **RTSP stream** (if you plan to use it).
+5. A USB camera plugged in and accessible via /dev/video0
+6. When using USB camera, it is recommended to update the system and rebooting before installing to avoid potential driver issues:
 
-DEPLOYMENT STEPS
-----------------
-1.  Place the `deploy.sh` script and the `camera_unavailable.jpg` file in the same directory on your new server (e.g., in your home directory).
+```
+sudo apt update && sudo apt upgrade -y
+```
 
-2.  Open a terminal and navigate to that directory.
+## DEPLOYMENT STEPS
 
-3.  Make the script executable:
-    ```
-    chmod +x deploy.sh
-    ```
+1. Download `deploy.sh` and `camera_unavailable.jpg` from this repo, or clone the repo
+```
+git clone https://github.com/Chubtoad5/object_detector_web.git
+```
+2. Make `deploy.sh` executable
+```
+cd object-detector-web
+chmod +x deploy.sh
+```
+3. Edit `deploy.sh` and update AZURE_VISION_KEY and AZURE_VISION_ENDPOINT with valid credentials, optionally update RTSP_URL if using an accessible RTSP stream.
 
-4.  Run the script with sudo:
-    ```
-    sudo ./deploy.sh
-    ```
-    The script will now set up everything automatically. It will take a few minutes to complete.
+4. Run the deploy script
+```
+sudo ./deploy.sh
+```
 
-CONFIGURATION (IMPORTANT)
--------------------------
-The deployment script sets up the application with default values. For the application to be fully functional, you must configure your credentials. The recommended way is to edit the systemd service files **after** the deployment is complete.
+Since the app supports frontend variables, it can be installed with one line:
+```
+git clone https://github.com/Chubtoad5/object_detector_web.git; cd object-detector-web; chmod +x deploy.sh; AZURE_VISION_KEY="MY_KEY" AZURE_VISION_ENDPOINT="MY_ENDPOINT" RTSP_URL="http://my_rtsp/url" sudo ./deploy.sh
+```
 
-### 1. Configure Azure Credentials
 
-This is required for the "Analyze Frame" button to work.
+## ACCESSING THE APPLICATION
 
-* **File to Edit:** `/etc/systemd/system/object-detector.service`
-* **Command to open the file for editing:**
-    ```
-    sudo systemctl edit --full object-detector.service
-    ```
-* **Action:** In the `[Service]` section, add/uncomment the `Environment=` lines and fill in your details:
-    ```ini
-    [Service]
-    Environment="AZURE_VISION_SUBSCRIPTION_KEY=PASTE_YOUR_KEY_HERE"
-    Environment="AZURE_VISION_ENDPOINT=PASTE_YOUR_ENDPOINT_HERE"
-    ...
-    ```
-* **Apply Changes:**
-    ```
-    sudo systemctl restart object-detector.service
-    ```
-
-### 2. Configure RTSP Stream URL
-
-This is required for the "Use RTSP Stream" button to work.
-
-* **File to Edit:** `/etc/systemd/system/camera.service`
-* **Command to open the file for editing:**
-    ```
-    sudo systemctl edit --full camera.service
-    ```
-* **Action:** In the `[Service]` section, add the `Environment=` line with your RTSP URL. If this line is not present, the script will use a hardcoded default.
-    ```ini
-    [Service]
-    Environment="RTSP_STREAM_URL=rtsp://your.camera.ip/stream/path"
-    ...
-    ```
-* **Apply Changes:**
-    ```
-    sudo systemctl restart camera.service
-    ```
-
-ACCESSING THE APPLICATION
--------------------------
 Once the deployment script is finished, the application will be running and accessible on port 80 (standard HTTP).
 
 1.  Find your server's IP address:
