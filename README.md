@@ -40,10 +40,10 @@ The deployment script sets up the application with default values. For the appli
 
 This is required for the "Analyze Frame" button to work.
 
-* **File to Edit:** `/etc/systemd/system/hat-detector.service`
+* **File to Edit:** `/etc/systemd/system/object-detector.service`
 * **Command to open the file for editing:**
     ```
-    sudo systemctl edit --full hat-detector.service
+    sudo systemctl edit --full object-detector.service
     ```
 * **Action:** In the `[Service]` section, add/uncomment the `Environment=` lines and fill in your details:
     ```ini
@@ -54,7 +54,7 @@ This is required for the "Analyze Frame" button to work.
     ```
 * **Apply Changes:**
     ```
-    sudo systemctl restart hat-detector.service
+    sudo systemctl restart object-detector.service
     ```
 
 ### 2. Configure RTSP Stream URL
@@ -91,4 +91,4 @@ Once the deployment script is finished, the application will be running and acce
     http://<your_server_ip>
     ```
 
-You should now see the Hat Detector application's user interface.
+You should now see the object Detector application's user interface.

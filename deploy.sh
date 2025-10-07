@@ -1,14 +1,7 @@
 #!/bin/bash
 
-#To run download/run use these commands.  Don't forget to edit the configuration variabes Azure/RTSP first.
-
-#wget -L https://raw.githubusercontent.com/timeisanillusion/hat_detector_web/refs/heads/main/deploy.sh
-#wget -L https://raw.githubusercontent.com/timeisanillusion/hat_detector_web/refs/heads/main/camera_unavailable.jpg
-#chmod +x deploy.sh
-#sudo ./deploy.sh
-
 # =============================================================================
-# All-in-One Deployment Script for the Hat Detector Application
+# All-in-One Deployment Script for the Object Detector Application
 # =============================================================================
 
 # --- Script Configuration ---
@@ -18,17 +11,18 @@ set -e # Exit immediately if a command exits with a non-zero status.
 # CONFIGURATION - EDIT THESE VARIABLES
 # =============================================================================
 # --- Azure Computer Vision Credentials ---
-AZURE_VISION_KEY="YOUR_AZURE_KEY_HERE"
-AZURE_VISION_ENDPOINT="YOUR_AZURE_ENDPOINT_HERE"
+AZURE_VISION_KEY=${AZURE_VISION_KEY:-"YOUR_AZURE_KEY_HERE"}
+AZURE_VISION_ENDPOINT=${AZURE_VISION_ENDPOINT:-"YOUR_AZURE_ENDPOINT_HERE"}
 
 # --- RTSP Stream URL ---
 # Example: "rtsp://admin:password@192.168.1.100/stream1"
 # Example for secure stream: "rtsp://192.168.1.1:7441/L0DUQ6167DCp9BE3"
-RTSP_URL="rtsp://192.168.1.1:7441/L0DUQ6167DCp9BE"
+RTSP_URL=${RTSP_URL:-"rtsp://192.168.1.250/axis-media/media.amp"}
 
 # --- Application User and Directory ---
-APP_USER="hat"
-APP_DIR="/opt/hat_detector_web_app"
+# acv = "Azure Computer Vision"
+APP_USER="acvuser"
+APP_DIR="/opt/object_detector_web_app"
 # =============================================================================
 # END OF CONFIGURATION
 # =============================================================================
@@ -52,6 +46,8 @@ echo "--- [Step 1/8] Updating system and installing prerequisites... ---"
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils
 DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) linux-modules-$(uname -r) linux-modules-extra-$(uname -r)
+# to prevent need of reboot when using /dev/video0 if uvcvideo was not enabled
+modprobe uvcvideo
 
 echo "--- [Step 2/8] Creating application user and directory... ---"
 if id "$APP_USER" &>/dev/null; then
@@ -115,7 +111,7 @@ app = Flask(__name__)
 
 # --- App Config ---
 CONFIG_FILE_PATH = "/tmp/camera_source.txt"
-SHM_NAME = 'hat_detector_frame_buffer' # Must match camera_manager.py
+SHM_NAME = 'object_detector_frame_buffer' # Must match camera_manager.py
 
 # --- Frame Config ---
 FRAME_HEIGHT = 720
@@ -296,7 +292,7 @@ FRAME_WIDTH = 1280
 FRAME_CHANNELS = 3
 SHARED_BUFFER_SIZE = FRAME_HEIGHT * FRAME_WIDTH * FRAME_CHANNELS
 CONFIG_FILE_PATH = "/tmp/camera_source.txt"
-SHM_NAME = 'hat_detector_frame_buffer'
+SHM_NAME = 'object_detector_frame_buffer'
 
 # --- Global objects for cleanup ---
 shm = None
@@ -383,7 +379,7 @@ cat <<'EOF' > $APP_DIR/templates/index.html
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Hat Detector</title>
+    <title>Object Detector</title>
     <style>
         body { font-family: Arial, sans-serif; background-color: #f0f0f0; color: #333; display: flex; flex-direction: column; align-items: center; min-height: 100vh; margin: 0; padding: 20px; }
         .container { background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); text-align: center; margin-bottom: 20px; }
@@ -404,7 +400,7 @@ cat <<'EOF' > $APP_DIR/templates/index.html
 </head>
 <body>
     <div class="container">
-        <h1>Live Hat Detector</h1>
+        <h1>Live Object Detector</h1>
         <div class="video-container">
             <img id="videoFeed" src="{{ url_for('video_feed') }}" alt="Video Stream">
             <canvas id="overlayCanvas"></canvas>
@@ -540,14 +536,14 @@ echo "--- [Step 5/8] Creating Systemd service files... ---"
 # Note: Variable expansion is used here for $RTSP_URL
 cat <<EOF > /etc/systemd/system/camera.service
 [Unit]
-Description=Hat Detector Camera Service
+Description=Object Detector Camera Service
 After=network.target
 
 [Service]
-ExecStart=/opt/hat_detector_web_app/venv/bin/python3 /opt/hat_detector_web_app/camera_manager.py
-WorkingDirectory=/opt/hat_detector_web_app
+ExecStart=/opt/object_detector_web_app/venv/bin/python3 /opt/object_detector_web_app/camera_manager.py
+WorkingDirectory=/opt/object_detector_web_app
 Restart=always
-User=hat
+User=acvuser
 Group=video
 ReadWritePaths=/dev/shm
 Environment="RTSP_STREAM_URL=$RTSP_URL"
@@ -557,11 +553,11 @@ WantedBy=multi-user.target
 EOF
 echo "Created camera.service"
 
-# --- hat-detector.service ---
+# --- object-detector.service ---
 # Note: Variable expansion is used here for Azure credentials
-cat <<EOF > /etc/systemd/system/hat-detector.service
+cat <<EOF > /etc/systemd/system/object-detector.service
 [Unit]
-Description=Hat Detector Web App
+Description=Object Detector Web App
 After=network.target camera.service
 Wants=camera.service
 
@@ -569,52 +565,52 @@ Wants=camera.service
 Environment="AZURE_VISION_SUBSCRIPTION_KEY=$AZURE_VISION_KEY"
 Environment="AZURE_VISION_ENDPOINT=$AZURE_VISION_ENDPOINT"
 
-ExecStart=/opt/hat_detector_web_app/venv/bin/gunicorn --workers 3 --worker-class gevent --bind unix:hat-detector.sock -m 007 app:app
-WorkingDirectory=/opt/hat_detector_web_app
+ExecStart=/opt/object_detector_web_app/venv/bin/gunicorn --workers 3 --worker-class gevent --bind unix:object-detector.sock -m 007 app:app
+WorkingDirectory=/opt/object_detector_web_app
 StandardOutput=journal
 StandardError=journal
 Restart=always
-User=hat
-Group=hat
+User=acvuser
+Group=acvuser
 
 [Install]
 WantedBy=multi-user.target
 EOF
-echo "Created hat-detector.service"
+echo "Created object-detector.service"
 
 echo "--- [Step 6/8] Configuring Nginx reverse proxy... ---"
-cat <<'EOF' > /etc/nginx/sites-available/hat-detector
+cat <<'EOF' > /etc/nginx/sites-available/object-detector
 server {
     listen 80;
     server_name _;
 
     location / {
-        proxy_pass http://unix:/opt/hat_detector_web_app/hat-detector.sock;
+        proxy_pass http://unix:/opt/object_detector_web_app/object-detector.sock;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 EOF
-ln -sf /etc/nginx/sites-available/hat-detector /etc/nginx/sites-enabled
+ln -sf /etc/nginx/sites-available/object-detector /etc/nginx/sites-enabled
 rm -f /etc/nginx/sites-enabled/default
 aa-complain /etc/apparmor.d/usr.sbin.nginx 2>/dev/null || echo "AppArmor profile for Nginx not found, skipping."
 echo "Created Nginx configuration."
 
 echo "--- [Step 7/8] Setting up sudo permissions... ---"
-cat <<'EOF' > /etc/sudoers.d/hat-detector-sudo
-hat ALL=(ALL) NOPASSWD: /bin/systemctl restart camera.service
+cat <<'EOF' > /etc/sudoers.d/object-detector-sudo
+acvuser ALL=(ALL) NOPASSWD: /bin/systemctl restart camera.service
 EOF
-chmod 0440 /etc/sudoers.d/hat-detector-sudo
+chmod 0440 /etc/sudoers.d/object-detector-sudo
 echo "Sudo permissions configured."
 
 echo "--- [Step 8/8] Activating services... ---"
 systemctl daemon-reload
 systemctl enable camera.service
-systemctl enable hat-detector.service
+systemctl enable object-detector.service
 systemctl restart nginx
 systemctl restart camera.service
-systemctl restart hat-detector.service
+systemctl restart object-detector.service
 
 echo ""
 echo "============================================================"
