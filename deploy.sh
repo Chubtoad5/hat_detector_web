@@ -43,9 +43,9 @@ if [[ "$AZURE_VISION_KEY" == "YOUR_AZURE_KEY_HERE" || "$AZURE_VISION_ENDPOINT" =
 fi
 
 echo "--- [Step 1/8] Updating system and installing prerequisites... ---"
-apt-get update
-DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils
-DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) linux-modules-$(uname -r) linux-modules-extra-$(uname -r)
+apt-get update -qq
+DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip nginx ffmpeg apparmor-utils &> /dev/null
+DEBIAN_FRONTEND=noninteractive apt-get install -y linux-headers-$(uname -r) linux-modules-$(uname -r) linux-modules-extra-$(uname -r) &> /dev/null
 # to prevent need of reboot when using /dev/video0 if uvcvideo was not enabled
 modprobe uvcvideo
 
