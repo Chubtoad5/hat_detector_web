@@ -35,10 +35,7 @@ fi
 
 # --- Check if variables have been configured ---
 if [[ "$AZURE_VISION_KEY" == "YOUR_AZURE_KEY_HERE" || "$AZURE_VISION_ENDPOINT" == "YOUR_AZURE_ENDPOINT_HERE" ]]; then
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-  echo "!!! ERROR: Please edit this script and set your Azure    !!!"
-  echo "!!!        credentials in the CONFIGURATION section.     !!!"
-  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "ERROR: Update AZURE_VISION_KEY and AZURE_VISION_ENDPOINT credentials in the CONFIGURATION section of this script."
   exit 1
 fi
 
