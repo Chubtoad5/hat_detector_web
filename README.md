@@ -1,10 +1,12 @@
 
-# Object Detector Application - Deployment Guide
+# Object Detector Application
 
+This is a python based application that leverages Azure Computer Vision (https://azure.microsoft.com/en-us/resources/cloud-computing-dictionary/what-is-computer-vision)
+The application is deployed on Ubuntu and taps into a local USB or RTSP camera feed for analyzing frames with the Computer Vision APIs
 
 ## OVERVIEW
 
-This guide explains how to deploy the Ojbect Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
+This guide explains how to deploy the Objec Detector application on a new server using the all-in-one deployment script (`deploy.sh`). The script automates the installation of all dependencies, configures the necessary services (web app and camera manager), and starts the application.
 
 This applications takes a local video feed (i.e. from a USB Webcam, presented via /dev/video0) and from an RTSP URL provided during setup.
 
@@ -15,7 +17,7 @@ This applications takes a local video feed (i.e. from a USB Webcam, presented vi
 3. Your **Azure Computer Vision credentials** (Key and Endpoint).
 4. The URL for your **RTSP stream** (if you plan to use it).
 5. A USB camera plugged in and accessible via /dev/video0
-6. When using USB camera, it is recommended to update the system and rebooting before installing to avoid potential driver issues:
+6. When using USB camera, it is recommended to update the system and rebooting before installing to avoid potential driver issues
 
 ```
 sudo apt update && sudo apt upgrade -y
